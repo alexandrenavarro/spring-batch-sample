@@ -21,7 +21,9 @@ import org.springframework.batch.item.file.mapping.BeanWrapperFieldSetMapper;
 import org.springframework.batch.item.file.mapping.DefaultLineMapper;
 import org.springframework.batch.item.file.transform.DelimitedLineTokenizer;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationContextException;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
@@ -29,6 +31,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 
+import java.sql.SQLException;
 import java.time.LocalDateTime;
 
 @Configuration
@@ -57,7 +60,7 @@ public class BatchConfiguration {
         reader.setResource(new ClassPathResource("sample-data.csv"));
         reader.setLineMapper(new DefaultLineMapper<Person>() {{
             setLineTokenizer(new DelimitedLineTokenizer() {{
-                setNames(new String[] { "firstName", "lastName" });
+                setNames(new String[]{"firstName", "lastName"});
             }});
             setFieldSetMapper(new BeanWrapperFieldSetMapper<Person>() {{
                 setTargetType(Person.class);
@@ -91,22 +94,39 @@ public class BatchConfiguration {
     // end::listener[]
 
     // tag::jobstep[]
-    //@Bean
-    public Job importUserJob(FlatFileItemReader<Person> ir) {
-        return jobBuilderFactory.get("importUserJob")
+    @Bean
+    public Job importUserJob2(FlatFileItemReader<Person> ir, @Qualifier("step2") Step step2) {
+        return jobBuilderFactory.get("importUserJob2")
                 .incrementer(new RunIdIncrementer())
-                .listener(listener())
-                .flow(step1(ir))
+                .listener(new JobExecutionListener() {
+
+                    @Override
+                    public void beforeJob(JobExecution jobExecution) {
+
+                    }
+
+                    @Override
+                    public void afterJob(JobExecution jobExecution) {
+                        System.out.println(jobExecution);
+
+                        if (jobExecution.getStatus() == BatchStatus.FAILED) {
+                            throw new Error("");
+                            //throw new RuntimeException("");
+                        }
+
+                    }
+                })
+                .flow(step2)
                 .end()
                 .build();
     }
 
 
-
     @Autowired
+    @Qualifier("step1")
     private Step step;
 
-    @Scheduled(cron = "*/10 * * * * *")
+    @Scheduled(cron = "0 * * * * *")
     public void perform() {
         try {
             jobLauncher.run(jobBuilderFactory.get("importUserJob")
@@ -131,11 +151,27 @@ public class BatchConfiguration {
     @Bean
     public Step step1(FlatFileItemReader<Person> ir) {
         return stepBuilderFactory.get("step1")
-                .<Person, Person> chunk(10)
+                .<Person, Person>chunk(10)
                 .reader(ir)
                 .processor(processor())
                 .writer(writer())
                 .build();
     }
-    // end::jobstep[]
+
+    @Bean
+    public Step step2(FlatFileItemReader<Person> ir) {
+        return stepBuilderFactory.get("step2")
+                .<Person, Person>chunk(10)
+                .reader(ir)
+//                .writer((map -> {
+//                    throw new SQLException("test");
+//                }))
+
+                .writer(writer())
+                .build();
+    }
+
+
+
+// end::jobstep[]
 }
