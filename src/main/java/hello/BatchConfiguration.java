@@ -1,16 +1,14 @@
 package hello;
 
-import javax.sql.DataSource;
-
+import de.codecentric.boot.admin.config.EnableAdminServer;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.batch.core.*;
 import org.springframework.batch.core.configuration.annotation.EnableBatchProcessing;
 import org.springframework.batch.core.configuration.annotation.JobBuilderFactory;
 import org.springframework.batch.core.configuration.annotation.StepBuilderFactory;
 import org.springframework.batch.core.configuration.annotation.StepScope;
-import org.springframework.batch.core.configuration.support.JobLoader;
 import org.springframework.batch.core.launch.JobLauncher;
 import org.springframework.batch.core.launch.support.RunIdIncrementer;
-import org.springframework.batch.core.launch.support.SystemExiter;
 import org.springframework.batch.core.repository.JobExecutionAlreadyRunningException;
 import org.springframework.batch.core.repository.JobInstanceAlreadyCompleteException;
 import org.springframework.batch.core.repository.JobRestartException;
@@ -23,7 +21,8 @@ import org.springframework.batch.item.file.transform.DelimitedLineTokenizer;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.ApplicationContextException;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.autoconfigure.EnableAutoConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ClassPathResource;
@@ -31,13 +30,16 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 
-import java.sql.SQLException;
+import javax.sql.DataSource;
 import java.time.LocalDateTime;
 
 @Configuration
 @EnableBatchProcessing
 @EnableScheduling
-public class BatchConfiguration {
+@EnableAutoConfiguration
+@EnableAdminServer
+@Slf4j
+public class BatchConfiguration implements CommandLineRunner {
 
     @Autowired
     public JobBuilderFactory jobBuilderFactory;
@@ -126,7 +128,7 @@ public class BatchConfiguration {
     @Qualifier("step1")
     private Step step;
 
-    @Scheduled(cron = "0 * * * * *")
+    @Scheduled(cron = "0 0 0 * * *")
     public void perform() {
         try {
             jobLauncher.run(jobBuilderFactory.get("importUserJob")
@@ -146,6 +148,9 @@ public class BatchConfiguration {
         }
 
     }
+
+
+
 
 
     @Bean
@@ -171,6 +176,43 @@ public class BatchConfiguration {
                 .build();
     }
 
+    @Autowired
+    private SmokeImportUserJobHealthCheck smokeImportUserJobHealthCheck;
+
+
+    @Override
+    public void run(String... strings) throws Exception {
+        try {
+
+            final JobExecution jobExecution = jobLauncher.run(jobBuilderFactory.get("importUserJob")
+                    .incrementer(new RunIdIncrementer())
+                    .listener(listener())
+                    .flow(step)
+                    .end()
+                    .build(), new JobParametersBuilder().addString("date", (LocalDateTime.now()).toString()).toJobParameters());
+            final BatchStatus batchStatus = jobExecution.getStatus();
+            log.info("batchStatus:{} before sleep", batchStatus);
+            Thread.sleep(10000);
+
+            smokeImportUserJobHealthCheck.setBatchStatus(batchStatus);
+            log.info("batchStatus:{}", batchStatus);
+        } catch (JobExecutionAlreadyRunningException e) {
+            e.printStackTrace();
+        } catch (JobRestartException e) {
+            e.printStackTrace();
+        } catch (JobInstanceAlreadyCompleteException e) {
+            e.printStackTrace();
+        } catch (JobParametersInvalidException e) {
+            e.printStackTrace();
+        }
+
+
+    }
+
+    @Bean
+    public SmokeImportUserJobHealthCheck smokeImportUserJobHealthCheck() {
+        return new SmokeImportUserJobHealthCheck();
+    }
 
 
 // end::jobstep[]
